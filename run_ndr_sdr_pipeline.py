@@ -939,6 +939,13 @@ def _run_ndr(
 
 def main():
     """Entry point."""
+    parser = argparse.ArgumentParser(description='run NDR/SDR pipeline')
+    parser.add_argument('config_file_path_pattern', nargs='+', help='Path to one or more .ini files or matching patterns')
+    args = parser.parse_args()
+    config_file_list = [path for pattern in pattern_list for path in glob.glob(pattern) ]
+
+
+
     task_graph = taskgraph.TaskGraph(
         WORKSPACE_DIR, multiprocessing.cpu_count(), 15.0,
         parallel_mode='process', taskgraph_name='run pipeline main')
