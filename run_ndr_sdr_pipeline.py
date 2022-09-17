@@ -30,7 +30,8 @@ logging.basicConfig(
     format=(
         '%(asctime)s (%(relativeCreated)d) %(levelname)s %(name)s'
         ' [%(funcName)s:%(lineno)d] %(message)s'),
-    filename='sdrndrlog.txt')
+    #filename='sdrndrlog.txt')
+    )
 logging.getLogger('ecoshard.taskgraph').setLevel(logging.INFO)
 logging.getLogger('ecoshard.ecoshard').setLevel(logging.INFO)
 logging.getLogger('urllib3.connectionpool').setLevel(logging.INFO)
@@ -45,6 +46,9 @@ logging.getLogger('inspring.ndr_mfd_plus').setLevel(logging.WARNING)
 
 LOGGER = logging.getLogger(__name__)
 
+
+def _parse_non_default_options(config, section):
+    return set([x for x in config[section] if x not in config._defaults])
 
 def _flatten_dir(working_dir):
     """Move all files in subdirectory to `working_dir`."""
@@ -126,6 +130,7 @@ def fetch_data(ecoshard_map, data_dir):
             url, nodata = value
         else:
             url = value
+            nodata = None
         if url.startswith('http'):
             target_path = os.path.join(data_dir, os.path.basename(url))
             data_map[key] = target_path
@@ -146,7 +151,7 @@ def fetch_data(ecoshard_map, data_dir):
         else:
             if not os.path.exists(url):
                 raise ValueError(
-                    f'expected an existing file at {url} but not found')
+                    f'expected an existing file for {key} at {url} but not found')
             data_map[key] = url
     LOGGER.info('waiting for downloads to complete')
     task_graph.close()
@@ -174,6 +179,9 @@ def fetch_and_unpack_data(task_graph, config, scenario_id):
 
     # TODO: fix this so it downloads all the ecoshards
     ecoshard_map = {}
+    LOGGER.info(config.options('files'))
+    LOGGER.info(config.options('ndr_expected_keys'))
+    LOGGER.info(config.sections())
     for file_key in config.options('files'):
         ecoshard_map[file_key] = config.get(
             scenario_id, file_key, fallback=None)
@@ -953,17 +961,9 @@ def main():
     parser.add_argument('config_file_path_pattern', nargs='+', help='Path to one or more .ini files or matching patterns')
     args = parser.parse_args()
 
-    config = configparser.ConfigParser(allow_no_value=True)
-    config.read('global_config.ini')
-
-    print(config['DEFAULT']['WORKSPACE_DIR'])
-    return
-
-    WORKSPACE_DIR
-    SDR_WORKSPACE_DIR
-    NDR_WORKSPACE_DIR
-    WATERSHED_SUBSET_TOKEN_PATH
-    N_TO_BUFFER_STITCH
+    default_config = configparser.ConfigParser(allow_no_value=True)
+    default_config.read('global_config.ini')
+    expected_keys = _parse_non_default_options(default_config, 'expected_keys')
 
     config_file_list = [
         path for pattern in args.config_file_path_pattern
@@ -971,42 +971,45 @@ def main():
     scenario_list = []
     for config_path in config_file_list:
         scenario_id = os.path.basename(os.path.splitext(config_path)[0])
-        scenario_list.append(scenario_id)
-        config.read(config_path)
-        if not config.has_section(scenario_id):
+        scenario_config = configparser.ConfigParser(allow_no_value=True)
+        scenario_config.read(config_path)
+        if not scenario_id in scenario_config:
             raise ValueError(
-                f'expected a {scenario_id} header in {config_path} but found none')
+                f'expected a section called "{scenario_id}" {config_path} but only found these section headers: {scenario_config.sections()}')
         missing_keys = []
-        for expected_key in config['expected_keys'].options():
-            if not config.has_option(scenario_id, expected_key):
+        for expected_key in expected_keys:
+            if not expected_key in scenario_config[scenario_id]:
                 missing_keys.append(expected_key)
         if missing_keys:
             missing_key_str = ', '.join(missing_keys)
             raise ValueError(
                 f'expected the following keys in {config_path} but were not found: {missing_key_str}')
+        scenario_config.read('global_config.ini')
+        scenario_list.append((scenario_id, scenario_config))
+
+    LOGGER.debug(scenario_list)
 
     task_graph = taskgraph.TaskGraph(
-        config.get('DEFAULT', 'WORKSPACE_DIR'), multiprocessing.cpu_count(),
-        15.0, parallel_mode='process', taskgraph_name='run pipeline main')
+        default_config.get('DEFAULT', 'WORKSPACE_DIR'), multiprocessing.cpu_count(),
+        15.0, parallel_mode='thread', taskgraph_name='run pipeline main')
 
-    for scenario_id in scenario_list:
-        run_scenario(task_graph, scenario_id)
+    for scenario_id, scenario_config in scenario_list:
+        run_scenario(task_graph, scenario_config, scenario_id)
 
 def run_scenario(task_graph, config, scenario_id):
     """Run scenario `scenario_id` in config against taskgraph."""
+    expected_files = _parse_non_default_options(config, 'files')
+    if not config.getboolean(scenario_id, 'run_ndr'):
+        expected_files -= _parse_non_default_options(config, 'ndr_expected_keys')
+    if not config.getboolean(scenario_id, 'run_sdr'):
+        expected_files -= _parse_non_default_options(config, 'sdr_expected_keys')
+
+    LOGGER.debug(expected_files)
+    return
+
     data_map = fetch_and_unpack_data(task_graph, config, scenario_id)
-
-    # watershed_subset = {
-    #     #'af_bas_15s_beta': [19039, 23576, 18994],
-    #     #'au_bas_15s_beta': [125804],
-    #     #'as_bas_15s_beta': [218032],
-    #     'af_bas_15s_beta': [78138],
-    #     }
-    # watershed_subset = None
-
     # make sure taskgraph doesn't re-run just because the file was opened
-    watershed_subset_token_path = config.get(
-        'DEFAULT', 'WATERSHED_SUBSET_TOKEN_PATH')
+    watershed_subset_token_path = config['DEFAULT']['WATERSHED_SUBSET_TOKEN_PATH']
     watershed_subset_task = task_graph.add_task(
         func=_batch_into_watershed_subsets,
         args=(
