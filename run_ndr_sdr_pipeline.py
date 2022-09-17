@@ -1,6 +1,8 @@
 """Run SDR and NDR models on large spatial footprint."""
 from datetime import datetime
+import argparse
 import collections
+import configparser
 import glob
 import gzip
 import itertools
@@ -8,7 +10,6 @@ import logging
 import multiprocessing
 import os
 import shutil
-import sys
 import threading
 import time
 
@@ -43,7 +44,6 @@ logging.getLogger('inspring.sdr_c_factor').setLevel(logging.WARNING)
 logging.getLogger('inspring.ndr_mfd_plus').setLevel(logging.WARNING)
 
 LOGGER = logging.getLogger(__name__)
-
 
 
 def _flatten_dir(working_dir):
@@ -120,6 +120,8 @@ def fetch_data(ecoshard_map, data_dir):
         taskgraph_name='fetch data')
     data_map = {}
     for key, value in ecoshard_map.items():
+        if value is None:
+            continue
         if isinstance(value, tuple):
             url, nodata = value
         else:
@@ -165,39 +167,45 @@ def _unpack_archive(archive_path, dest_dir):
         shutil.unpack_archive(archive_path, dest_dir)
 
 
-def fetch_and_unpack_data(task_graph):
+def fetch_and_unpack_data(task_graph, config, scenario_id):
     """Fetch & unpack data subroutine."""
-    data_dir = os.path.join(WORKSPACE_DIR, 'data')
+    data_dir = os.path.join(config.get(scenario_id, 'WORKSPACE_DIR'), 'data')
     LOGGER.info('downloading data')
+
+    # TODO: fix this so it downloads all the ecoshards
+    ecoshard_map = {}
+    for file_key in config.options('files'):
+        ecoshard_map[file_key] = config.get(
+            scenario_id, file_key, fallback=None)
+
     fetch_task = task_graph.add_task(
         func=fetch_data,
-        args=(ECOSHARD_MAP, data_dir),
+        args=(ecoshard_map, data_dir),
         store_result=True,
         transient_run=True,
         task_name='download ecoshards')
     file_map = fetch_task.get()
     LOGGER.info('downloaded data')
-    dem_dir = os.path.join(data_dir, DEM_KEY)
+    dem_dir = os.path.join(data_dir, config.get(scenario_id, 'DEM'))
     dem_vrt_path = os.path.join(dem_dir, 'dem.vrt')
     LOGGER.info('unpack dem')
     _ = task_graph.add_task(
         func=_unpack_and_vrt_tiles,
-        args=(file_map[DEM_KEY], dem_dir, -9999, dem_vrt_path),
+        args=(file_map['DEM'], dem_dir, -9999, dem_vrt_path),
         target_path_list=[dem_vrt_path],
-        task_name=f'unpack {file_map[DEM_KEY]}')
-    file_map[DEM_KEY] = dem_vrt_path
+        task_name=f'unpack {file_map["DEM"]}')
+    file_map['DEM'] = dem_vrt_path
     LOGGER.info('unpack watersheds')
     _ = task_graph.add_task(
         func=_unpack_archive,
-        args=(file_map[WATERSHEDS_KEY], data_dir),
-        task_name=f'decompress {file_map[WATERSHEDS_KEY]}')
-    file_map[WATERSHEDS_KEY] = data_dir
+        args=(file_map['WATERSHEDS'], data_dir),
+        task_name=f'decompress {file_map["WATERSHEDS"]}')
+    file_map['WATERSHEDS'] = data_dir
     task_graph.join()
 
     # just need the base directory for watersheds
-    file_map[WATERSHEDS_KEY] = os.path.join(
-        file_map[WATERSHEDS_KEY], 'watersheds_globe_HydroSHEDS_15arcseconds')
-
+    file_map['WATERSHEDS'] = os.path.join(
+        file_map['WATERSHEDS'], 'watersheds_globe_HydroSHEDS_15arcseconds')
 
     return file_map
 
@@ -504,7 +512,7 @@ def _run_sdr(
                 global_wgs84_bb, watershed_path, local_workspace_dir,
                 dem_path, erosivity_path, erodibility_path, lulc_path,
                 biophysical_table_path, threshold_flow_accumulation, k_param,
-                sdr_max, ic_0_param, target_pixel_size,
+                sdr_max, ic_0_param, l_cap, target_pixel_size,
                 biophysical_table_lucode_field, stitch_raster_queue_map,
                 result_suffix),
             transient_run=False,
@@ -529,7 +537,7 @@ def _run_sdr(
 def _execute_sdr_job(
         global_wgs84_bb, watersheds_path, local_workspace_dir, dem_path,
         erosivity_path, erodibility_path, lulc_path, biophysical_table_path,
-        threshold_flow_accumulation, k_param, sdr_max, ic_0_param,
+        threshold_flow_accumulation, k_param, sdr_max, ic_0_param, l_cap,
         target_pixel_size, biophysical_table_lucode_field,
         stitch_raster_queue_map, result_suffix):
     """Worker to execute sdr and send signals to stitcher.
@@ -550,6 +558,7 @@ def _execute_sdr_job(
             k_param
             sdr_max
             ic_0_param
+            l_cap
             target_pixel_size
             biophysical_table_lucode_field
             result_suffix
@@ -608,6 +617,7 @@ def _execute_sdr_job(
         'k_param': k_param,
         'sdr_max': sdr_max,
         'ic_0_param': ic_0_param,
+        'l_cap': l_cap,
         'results_suffix': result_suffix,
         'biophysical_table_lucode_field': biophysical_table_lucode_field,
         'single_outlet': geoprocessing.get_vector_info(
@@ -942,115 +952,144 @@ def main():
     parser = argparse.ArgumentParser(description='run NDR/SDR pipeline')
     parser.add_argument('config_file_path_pattern', nargs='+', help='Path to one or more .ini files or matching patterns')
     args = parser.parse_args()
-    config_file_list = [path for pattern in pattern_list for path in glob.glob(pattern)]
 
+    config = configparser.ConfigParser(allow_no_value=True)
+    config.read('global_config.ini')
 
+    print(config['DEFAULT']['WORKSPACE_DIR'])
+    return
+
+    WORKSPACE_DIR
+    SDR_WORKSPACE_DIR
+    NDR_WORKSPACE_DIR
+    WATERSHED_SUBSET_TOKEN_PATH
+    N_TO_BUFFER_STITCH
+
+    config_file_list = [
+        path for pattern in args.config_file_path_pattern
+        for path in glob.glob(pattern)]
+    scenario_list = []
+    for config_path in config_file_list:
+        scenario_id = os.path.basename(os.path.splitext(config_path)[0])
+        scenario_list.append(scenario_id)
+        config.read(config_path)
+        if not config.has_section(scenario_id):
+            raise ValueError(
+                f'expected a {scenario_id} header in {config_path} but found none')
+        missing_keys = []
+        for expected_key in config['expected_keys'].options():
+            if not config.has_option(scenario_id, expected_key):
+                missing_keys.append(expected_key)
+        if missing_keys:
+            missing_key_str = ', '.join(missing_keys)
+            raise ValueError(
+                f'expected the following keys in {config_path} but were not found: {missing_key_str}')
 
     task_graph = taskgraph.TaskGraph(
-        WORKSPACE_DIR, multiprocessing.cpu_count(), 15.0,
-        parallel_mode='process', taskgraph_name='run pipeline main')
-    data_map = fetch_and_unpack_data(task_graph)
+        config.get('DEFAULT', 'WORKSPACE_DIR'), multiprocessing.cpu_count(),
+        15.0, parallel_mode='process', taskgraph_name='run pipeline main')
 
-    watershed_subset = {
-        #'af_bas_15s_beta': [19039, 23576, 18994],
-        #'au_bas_15s_beta': [125804],
-        #'as_bas_15s_beta': [218032],
-        'af_bas_15s_beta': [78138],
-        }
-    watershed_subset = None
+    for scenario_id in scenario_list:
+        run_scenario(task_graph, scenario_id)
+
+def run_scenario(task_graph, config, scenario_id):
+    """Run scenario `scenario_id` in config against taskgraph."""
+    data_map = fetch_and_unpack_data(task_graph, config, scenario_id)
+
+    # watershed_subset = {
+    #     #'af_bas_15s_beta': [19039, 23576, 18994],
+    #     #'au_bas_15s_beta': [125804],
+    #     #'as_bas_15s_beta': [218032],
+    #     'af_bas_15s_beta': [78138],
+    #     }
+    # watershed_subset = None
 
     # make sure taskgraph doesn't re-run just because the file was opened
+    watershed_subset_token_path = config.get(
+        'DEFAULT', 'WATERSHED_SUBSET_TOKEN_PATH')
     watershed_subset_task = task_graph.add_task(
         func=_batch_into_watershed_subsets,
         args=(
-            data_map[WATERSHEDS_KEY], 4, WATERSHED_SUBSET_TOKEN_PATH,
-            watershed_subset),
-        target_path_list=[WATERSHED_SUBSET_TOKEN_PATH],
+            data_map['WATERSHEDS'], 4,
+            watershed_subset_token_path,
+            eval(config.get('DEFAULT', 'GLOBAL_BB')),
+            eval(config.get(scenario_id, 'watershed_subset', fallback=None))),
+        target_path_list=[watershed_subset_token_path],
         store_result=True,
         task_name='watershed subset batch')
     watershed_subset_list = watershed_subset_task.get()
 
     task_graph.join()
 
+    workspace_dir = config.get(scenario_id, 'WORKSPACE_DIR')
     sdr_target_stitch_raster_map = {
         'sed_export.tif': os.path.join(
-            WORKSPACE_DIR, 'global_sed_export.tif'),
+            workspace_dir, 'global_sed_export.tif'),
         'sed_retention.tif': os.path.join(
-            WORKSPACE_DIR, 'global_sed_retention.tif'),
+            workspace_dir, 'global_sed_retention.tif'),
         'sed_deposition.tif': os.path.join(
-            WORKSPACE_DIR, 'global_sed_deposition.tif'),
+            workspace_dir, 'global_sed_deposition.tif'),
         'usle.tif': os.path.join(
-            WORKSPACE_DIR, 'global_usle.tif'),
+            workspace_dir, 'global_usle.tif'),
     }
 
     ndr_target_stitch_raster_map = {
         'n_export.tif': os.path.join(
-            WORKSPACE_DIR, 'global_n_export.tif'),
+            workspace_dir, 'global_n_export.tif'),
         'n_retention.tif': os.path.join(
-            WORKSPACE_DIR, 'global_n_retention.tif'),
+            workspace_dir, 'global_n_retention.tif'),
         os.path.join('intermediate_outputs', 'modified_load_n.tif'): os.path.join(
-            WORKSPACE_DIR, 'global_modified_load_n.tif'),
+            workspace_dir, 'global_modified_load_n.tif'),
     }
 
-    run_sdr = True
-    run_ndr = True
+    run_sdr = config.getboolean(scenario_id, 'RUN_SDR')
+    run_ndr = config.getboolean(scenario_id, 'RUN_NDR')
     keep_intermediate_files = True
-    dem_key = os.path.basename(os.path.splitext(data_map[DEM_KEY])[0])
-    sdr_run_set = set()
-    for lulc_key, biophysical_table_key, lucode, fert_key in [
-            (LULC_REFOREST_KEY, NEW_171_181_ESA_BIOPHYSICAL_121621_TABLE_KEY, NEW_ESA_LUCODE_VALUE, FERTILIZER_CURRENT_KEY),
-            (LULC_AFC_KEY, NEW_171_181_ESA_BIOPHYSICAL_121621_TABLE_KEY, NEW_ESA_LUCODE_VALUE, FERTILIZER_CURRENT_KEY),
-            ]:
+    dem_key = os.path.basename(os.path.splitext(data_map['DEM'])[0])
 
-        if run_sdr:
-            sdr_workspace_dir = os.path.join(SDR_WORKSPACE_DIR, dem_key)
-            # SDR doesn't have fert scenarios
-            if lulc_key in sdr_run_set:
-                continue
-            sdr_run_set.add(lulc_key)
-            _run_sdr(
-                task_graph=task_graph,
-                workspace_dir=sdr_workspace_dir,
-                watershed_path_list=watershed_subset_list,
-                dem_path=data_map[DEM_KEY],
-                erosivity_path=data_map[EROSIVITY_KEY],
-                erodibility_path=data_map[ERODIBILITY_KEY],
-                lulc_path=data_map[lulc_key],
-                target_pixel_size=TARGET_PIXEL_SIZE_M,
-                biophysical_table_path=data_map[biophysical_table_key],
-                biophysical_table_lucode_field=lucode,
-                threshold_flow_accumulation=THRESHOLD_FLOW_ACCUMULATION,
-                l_cap=L_CAP,
-                k_param=K_PARAM,
-                sdr_max=SDR_MAX,
-                ic_0_param=IC_0_PARAM,
-                target_stitch_raster_map=sdr_target_stitch_raster_map,
-                keep_intermediate_files=keep_intermediate_files,
-                result_suffix=lulc_key,
-                )
+    if run_sdr:
+        sdr_workspace_dir = os.path.join(
+            config.get(scenario_id, 'SDR_WORKSPACE_DIR'), dem_key)
+        # SDR doesn't have fert scenarios
+        _run_sdr(
+            task_graph=task_graph,
+            workspace_dir=sdr_workspace_dir,
+            watershed_path_list=watershed_subset_list,
+            dem_path=data_map['DEM'],
+            erosivity_path=data_map['EROSIVITY'],
+            erodibility_path=data_map['ERODIBILITY'],
+            lulc_path=data_map['LULC'],
+            target_pixel_size=config.get(scenario_id, 'TARGET_PIXEL_SIZE_M'),
+            biophysical_table_path=data_map['BIOPHYSICAL_TABLE'],
+            biophysical_table_lucode_field=config.get(scenario_id, 'BIOPHYSICAL_TABLE_LUCODE_COLUMN_ID'),
+            threshold_flow_accumulation=config.get(scenario_id, 'THRESHOLD_FLOW_ACCUMULATION'),
+            l_cap=config.getfloat(scenario_id, 'L_CAP'),
+            k_param=config.getfloat(scenario_id, 'K_PARAM'),
+            sdr_max=config.getfloat(scenario_id, 'SDR_MAX'),
+            ic_0_param=config.getfloat(scenario_id, 'IC_0_PARAM'),
+            target_stitch_raster_map=sdr_target_stitch_raster_map,
+            keep_intermediate_files=keep_intermediate_files,
+            result_suffix=scenario_id)
 
-        if run_ndr:
-            ndr_workspace_dir = os.path.join(NDR_WORKSPACE_DIR, dem_key)
-            if fert_key is None:
-                fert_key = FERTILIZER_CURRENT_KEY
-            result_suffix = f'{lulc_key}_{fert_key}'
-            _run_ndr(
-                task_graph=task_graph,
-                workspace_dir=ndr_workspace_dir,
-                runoff_proxy_path=data_map[RUNOFF_PROXY_KEY],
-                fertilizer_path=data_map[fert_key],
-                biophysical_table_path=data_map[biophysical_table_key],
-                biophysical_table_lucode_field=lucode,
-                watershed_path_list=watershed_subset_list,
-                dem_path=data_map[DEM_KEY],
-                lulc_path=data_map[lulc_key],
-                target_pixel_size=TARGET_PIXEL_SIZE_M,
-                threshold_flow_accumulation=THRESHOLD_FLOW_ACCUMULATION,
-                k_param=K_PARAM,
-                target_stitch_raster_map=ndr_target_stitch_raster_map,
-                keep_intermediate_files=keep_intermediate_files,
-                result_suffix=result_suffix,
-                )
+    if run_ndr:
+        ndr_workspace_dir = os.path.join(
+            config.get(scenario_id, 'NDR_WORKSPACE_DIR'), dem_key)
+        _run_ndr(
+            task_graph=task_graph,
+            workspace_dir=ndr_workspace_dir,
+            runoff_proxy_path=data_map['RUNOFF_PROXY'],
+            fertilizer_path=data_map['FERTILIZER'],
+            biophysical_table_path=data_map['BIOPHYSICAL_TABLE'],
+            biophysical_table_lucode_field=config.get(scenario_id, 'BIOPHYSICAL_TABLE_LUCODE_COLUMN_ID'),
+            watershed_path_list=watershed_subset_list,
+            dem_path=data_map['DEM'],
+            lulc_path=data_map['LULC'],
+            target_pixel_size=config.getfloat(scenario_id, 'TARGET_PIXEL_SIZE_M'),
+            threshold_flow_accumulation=config.getfloat(scenario_id, 'THRESHOLD_FLOW_ACCUMULATION'),
+            k_param=config.getfloat(scenario_id, 'K_PARAM'),
+            target_stitch_raster_map=ndr_target_stitch_raster_map,
+            keep_intermediate_files=keep_intermediate_files,
+            result_suffix=scenario_id)
 
 
 def _warp_raster_stack(
@@ -1077,7 +1116,7 @@ def _warp_raster_stack(
                 'target_bb': clip_bounding_box,
                 'target_projection_wkt': clip_projection_wkt,
                 'working_dir': working_dir
-                },
+            },
             target_path_list=[clipped_raster_path],
             task_name=f'clipping {clipped_raster_path}')
 
@@ -1095,7 +1134,7 @@ def _warp_raster_stack(
                 'target_projection_wkt': watershed_projection_wkt,
                 'vector_mask_options': vector_mask_options,
                 'working_dir': working_dir,
-                },
+            },
             target_path_list=[warped_raster_path],
             task_name=f'warping {warped_raster_path}')
 
@@ -1113,7 +1152,7 @@ def _calculate_intersecting_bounding_box(raster_path_list):
         for info in raster_info_list]
 
     target_bounding_box = geoprocessing.merge_bounding_box_list(
-            raster_bounding_box_list, 'intersection')
+        raster_bounding_box_list, 'intersection')
     LOGGER.info(f'calculated target_bounding_box: {target_bounding_box}')
     return target_bounding_box
 

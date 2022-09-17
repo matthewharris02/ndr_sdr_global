@@ -12,3 +12,7 @@ for file_path in config_file_list:
 	basename = os.path.basename(os.path.splitext(file_path)[0])
 	config.read(file_path)
 	print(config.has_section(basename))
+
+print(config.get('tnc_nbs_reforest', 'WORKSPACE_DIR'))
+print(config.getboolean('DEFAULT', 'RUN_NDR'))
+print(eval(config.get('DEFAULT', 'GLOBAL_BB')))
