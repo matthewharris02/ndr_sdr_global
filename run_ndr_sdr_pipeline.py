@@ -48,7 +48,9 @@ LOGGER = logging.getLogger(__name__)
 
 
 def _parse_non_default_options(config, section):
-    return set([x for x in config[section] if x not in config._defaults])
+    return set([
+        x for x in config[section]
+        if x not in config._defaults])
 
 def _flatten_dir(working_dir):
     """Move all files in subdirectory to `working_dir`."""
@@ -178,10 +180,11 @@ def fetch_and_unpack_data(task_graph, config, scenario_id):
     LOGGER.info('downloading data')
 
     ecoshard_map = {}
-    for file_key in _parse_non_default_options(config, 'files'):
+    # hard code DEM and WATERSHEDS because it's both default and in 'files'
+    for file_key in _parse_non_default_options(config, 'files') | set(['DEM', 'WATERSHEDS']):
+        LOGGER.debug(file_key)
         ecoshard_map[file_key] = config.get(
             scenario_id, file_key, fallback=None)
-
     fetch_task = task_graph.add_task(
         func=fetch_data,
         args=(ecoshard_map, data_dir),
