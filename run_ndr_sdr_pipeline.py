@@ -177,7 +177,6 @@ def fetch_and_unpack_data(task_graph, config, scenario_id):
     data_dir = os.path.join(config.get(scenario_id, 'WORKSPACE_DIR'), 'data')
     LOGGER.info('downloading data')
 
-    # TODO: fix this so it downloads all the ecoshards
     ecoshard_map = {}
     LOGGER.info(config.options('files'))
     LOGGER.info(config.options('ndr_expected_keys'))
@@ -603,7 +602,6 @@ def _execute_sdr_job(
         os.path.join(clipped_data_dir, os.path.basename(path))
         for path in base_raster_path_list]
 
-    # TODO: figure out bounding box then individually warp so we don't
     # re-warp stuff we already did
     _warp_raster_stack(
         local_sdr_taskgraph, base_raster_path_list, warped_raster_path_list,
@@ -1005,7 +1003,6 @@ def run_scenario(task_graph, config, scenario_id):
         expected_files -= _parse_non_default_options(config, 'sdr_expected_keys')
 
     LOGGER.debug(expected_files)
-    return
 
     data_map = fetch_and_unpack_data(task_graph, config, scenario_id)
     # make sure taskgraph doesn't re-run just because the file was opened
