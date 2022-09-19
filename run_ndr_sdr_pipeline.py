@@ -178,10 +178,7 @@ def fetch_and_unpack_data(task_graph, config, scenario_id):
     LOGGER.info('downloading data')
 
     ecoshard_map = {}
-    LOGGER.info(config.options('files'))
-    LOGGER.info(config.options('ndr_expected_keys'))
-    LOGGER.info(config.sections())
-    for file_key in config.options('files'):
+    for file_key in _parse_non_default_options(config, 'files'):
         ecoshard_map[file_key] = config.get(
             scenario_id, file_key, fallback=None)
 
