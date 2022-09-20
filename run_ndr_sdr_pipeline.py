@@ -1029,7 +1029,7 @@ def run_scenario(task_graph, config, scenario_id):
             exclusive_watershed_subset,
         target_path_list=[watershed_subset_token_path],
         store_result=True,
-        task_name='watershed subset batch')
+        task_name='watershed subset batch'))
     watershed_subset_list = watershed_subset_task.get()
 
     task_graph.join()
