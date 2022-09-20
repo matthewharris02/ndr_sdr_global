@@ -1054,7 +1054,8 @@ def run_scenario(task_graph, config, scenario_id):
 
     run_sdr = config.getboolean(scenario_id, 'RUN_SDR')
     run_ndr = config.getboolean(scenario_id, 'RUN_NDR')
-    keep_intermediate_files = True
+    keep_intermediate_files = config.getboolean(
+        scenario_id, 'keep_intermediate_files')
     dem_key = os.path.basename(os.path.splitext(data_map['DEM'])[0])
 
     if run_sdr:
@@ -1069,7 +1070,7 @@ def run_scenario(task_graph, config, scenario_id):
             erosivity_path=data_map['EROSIVITY'],
             erodibility_path=data_map['ERODIBILITY'],
             lulc_path=data_map['LULC'],
-            target_pixel_size=config.get(scenario_id, 'TARGET_PIXEL_SIZE_M'),
+            target_pixel_size=config.getfloat(scenario_id, 'TARGET_PIXEL_SIZE_M'),
             biophysical_table_path=data_map['BIOPHYSICAL_TABLE'],
             biophysical_table_lucode_field=config.get(scenario_id, 'BIOPHYSICAL_TABLE_LUCODE_COLUMN_ID'),
             threshold_flow_accumulation=config.get(scenario_id, 'THRESHOLD_FLOW_ACCUMULATION'),
