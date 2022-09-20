@@ -159,6 +159,7 @@ def fetch_data(ecoshard_map, data_dir):
     task_graph.close()
     task_graph.join()
     task_graph = None
+    LOGGER.debug(data_map)
     return data_map
 
 
@@ -185,6 +186,7 @@ def fetch_and_unpack_data(task_graph, config, scenario_id):
         LOGGER.debug(file_key)
         ecoshard_map[file_key] = config.get(
             scenario_id, file_key, fallback=None)
+    LOGGER.debug(ecoshard_map)
     fetch_task = task_graph.add_task(
         func=fetch_data,
         args=(ecoshard_map, data_dir),
@@ -193,7 +195,7 @@ def fetch_and_unpack_data(task_graph, config, scenario_id):
         task_name='download ecoshards')
     file_map = fetch_task.get()
     LOGGER.info('downloaded data')
-    dem_dir = os.path.join(data_dir, config.get(scenario_id, 'DEM'))
+    dem_dir = os.path.splitext(file_map['DEM'])[0]
     dem_vrt_path = os.path.join(dem_dir, 'dem.vrt')
     LOGGER.info('unpack dem')
     _ = task_graph.add_task(
@@ -202,6 +204,7 @@ def fetch_and_unpack_data(task_graph, config, scenario_id):
         target_path_list=[dem_vrt_path],
         task_name=f'unpack {file_map["DEM"]}')
     file_map['DEM'] = dem_vrt_path
+    LOGGER.debug(file_map)
     LOGGER.info('unpack watersheds')
     _ = task_graph.add_task(
         func=_unpack_archive,
@@ -219,7 +222,7 @@ def fetch_and_unpack_data(task_graph, config, scenario_id):
 
 def _batch_into_watershed_subsets(
         watershed_root_dir, degree_separation, done_token_path,
-        watershed_subset=None):
+        global_bb, watershed_subset=None):
     """Construct geospatially adjacent subsets.
 
     Breaks watersheds up into geospatially similar watersheds and limits
@@ -233,6 +236,8 @@ def _batch_into_watershed_subsets(
             watershed subsets into.
         done_token_path (str): path to file to write when function is
             complete, indicates for batching that the task is complete.
+        global_bb (list): min_lng, min_lat, max_lng, max_lat bounding box
+            to limit watersheds to be selected from
         watershed_subset (dict): if not None, keys are watershed basefile
             names and values are FIDs to select. If present the simulation
             only constructs batches from these watershed/fids, otherwise
@@ -301,10 +306,10 @@ def _batch_into_watershed_subsets(
                 watershed_fid_index[job_id][0].append(fid)
             watershed_envelope = watershed_geom.GetEnvelope()
             watershed_bb = [watershed_envelope[i] for i in [0, 2, 1, 3]]
-            if (watershed_bb[0] < GLOBAL_BB[0] or
-                    watershed_bb[2] > GLOBAL_BB[2] or
-                    watershed_bb[1] > GLOBAL_BB[3] or
-                    watershed_bb[3] < GLOBAL_BB[1]):
+            if (watershed_bb[0] < global_bb[0] or
+                    watershed_bb[2] > global_bb[2] or
+                    watershed_bb[1] > global_bb[3] or
+                    watershed_bb[3] < global_bb[1]):
                 LOGGER.warn(
                     f'{watershed_bb} is on a dangerous boundary so dropping')
                 watershed_fid_index[job_id][0].pop()
