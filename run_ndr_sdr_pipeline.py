@@ -1017,13 +1017,16 @@ def run_scenario(task_graph, config, scenario_id):
     LOGGER.debug(data_map)
     # make sure taskgraph doesn't re-run just because the file was opened
     watershed_subset_token_path = config['DEFAULT']['WATERSHED_SUBSET_TOKEN_PATH']
+    exclusive_watershed_subset = eval(config.get(scenario_id, 'watershed_subset', fallback=None))
+    if exclusive_watershed_subset is not None:
+        exclusive_watershed_subset = eval(exclusive_watershed_subset)
     watershed_subset_task = task_graph.add_task(
         func=_batch_into_watershed_subsets,
         args=(
             data_map['WATERSHEDS'], 4,
             watershed_subset_token_path,
             eval(config.get('DEFAULT', 'GLOBAL_BB')),
-            eval(config.get(scenario_id, 'watershed_subset', fallback=None))),
+            exclusive_watershed_subset,
         target_path_list=[watershed_subset_token_path],
         store_result=True,
         task_name='watershed subset batch')
