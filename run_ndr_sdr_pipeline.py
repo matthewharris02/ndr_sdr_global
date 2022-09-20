@@ -1019,7 +1019,7 @@ def run_scenario(task_graph, config, scenario_id):
     watershed_subset_token_path = config['DEFAULT']['WATERSHED_SUBSET_TOKEN_PATH']
     exclusive_watershed_subset = eval(
         config.get(scenario_id, 'watershed_subset', fallback=None))
-    if exclusive_watershed_subset is not None:ddd
+    if exclusive_watershed_subset is not None:
         exclusive_watershed_subset = eval(exclusive_watershed_subset)
     watershed_subset_task = task_graph.add_task(
         func=_batch_into_watershed_subsets,
