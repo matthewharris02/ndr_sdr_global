@@ -46,7 +46,7 @@ logging.getLogger('inspring.ndr_mfd_plus').setLevel(logging.WARNING)
 
 LOGGER = logging.getLogger(__name__)
 
-N_TO_BUFFER_STITCH = 1000
+N_TO_BUFFER_STITCH = 10
 
 
 def _parse_non_default_options(config, section):
