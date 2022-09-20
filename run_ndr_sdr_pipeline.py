@@ -30,7 +30,7 @@ logging.basicConfig(
     format=(
         '%(asctime)s (%(relativeCreated)d) %(levelname)s %(name)s'
         ' [%(funcName)s:%(lineno)d] %(message)s'),
-    #filename='sdrndrlog.txt')
+    # filename='sdrndrlog.txt')
     )
 logging.getLogger('ecoshard.taskgraph').setLevel(logging.INFO)
 logging.getLogger('ecoshard.ecoshard').setLevel(logging.INFO)
@@ -46,11 +46,14 @@ logging.getLogger('inspring.ndr_mfd_plus').setLevel(logging.WARNING)
 
 LOGGER = logging.getLogger(__name__)
 
+N_TO_BUFFER_STITCH = 1000
+
 
 def _parse_non_default_options(config, section):
     return set([
         x for x in config[section]
         if x not in config._defaults])
+
 
 def _flatten_dir(working_dir):
     """Move all files in subdirectory to `working_dir`."""
@@ -184,7 +187,7 @@ def fetch_and_unpack_data(task_graph, config, scenario_id):
     # hard code DEM and WATERSHEDS because it's both default and in 'files'
     for file_key in _parse_non_default_options(config, 'files') | set(['DEM', 'WATERSHEDS']):
         LOGGER.debug(file_key)
-        ecoshard_map[file_key] = config.get(
+        ecoshard_map[file_key.upper()] = config.get(
             scenario_id, file_key, fallback=None)
     LOGGER.debug(ecoshard_map)
     fetch_task = task_graph.add_task(
@@ -412,6 +415,7 @@ def _run_sdr(
         sdr_max,
         ic_0_param,
         target_stitch_raster_map,
+        global_pixel_size_deg,
         keep_intermediate_files=False,
         c_factor_path=None,
         result_suffix=None,
@@ -472,8 +476,8 @@ def _run_sdr(
         if not os.path.exists(global_stitch_raster_path):
             LOGGER.info(f'creating {global_stitch_raster_path}')
             driver = gdal.GetDriverByName('GTiff')
-            n_cols = int((global_wgs84_bb[2]-global_wgs84_bb[0])/GLOBAL_PIXEL_SIZE_DEG)
-            n_rows = int((global_wgs84_bb[3]-global_wgs84_bb[1])/GLOBAL_PIXEL_SIZE_DEG)
+            n_cols = int((global_wgs84_bb[2]-global_wgs84_bb[0])/global_pixel_size_deg)
+            n_rows = int((global_wgs84_bb[3]-global_wgs84_bb[1])/global_pixel_size_deg)
             LOGGER.info(f'**** creating raster of size {n_cols} by {n_rows}')
             target_raster = driver.Create(
                 global_stitch_raster_path,
@@ -486,8 +490,8 @@ def _run_sdr(
             wgs84_srs.ImportFromEPSG(4326)
             target_raster.SetProjection(wgs84_srs.ExportToWkt())
             target_raster.SetGeoTransform(
-                [global_wgs84_bb[0], GLOBAL_PIXEL_SIZE_DEG, 0,
-                 global_wgs84_bb[3], 0, -GLOBAL_PIXEL_SIZE_DEG])
+                [global_wgs84_bb[0], global_pixel_size_deg, 0,
+                 global_wgs84_bb[3], 0, -global_pixel_size_deg])
             target_band = target_raster.GetRasterBand(1)
             target_band.SetNoDataValue(-9999)
             target_raster = None
@@ -516,8 +520,6 @@ def _run_sdr(
             workspace_dir, os.path.splitext(
                 os.path.basename(watershed_path))[0])
         task_name = f'sdr {os.path.basename(local_workspace_dir)}'
-        if any([sub in task_name for sub in SKIP_TASK_SET]):
-            continue
         task_graph.add_task(
             func=_execute_sdr_job,
             args=(
@@ -863,6 +865,7 @@ def _run_ndr(
         threshold_flow_accumulation,
         k_param,
         target_stitch_raster_map,
+        global_pixel_size_deg,
         keep_intermediate_files=False,
         result_suffix=None,):
 
@@ -886,8 +889,8 @@ def _run_ndr(
         if not os.path.exists(global_stitch_raster_path):
             LOGGER.info(f'creating {global_stitch_raster_path}')
             driver = gdal.GetDriverByName('GTiff')
-            n_cols = int((GLOBAL_BB[2]-GLOBAL_BB[0])/GLOBAL_PIXEL_SIZE_DEG)
-            n_rows = int((GLOBAL_BB[3]-GLOBAL_BB[1])/GLOBAL_PIXEL_SIZE_DEG)
+            n_cols = int((global_wgs84_bb[2]-global_wgs84_bb[0])/global_pixel_size_deg)
+            n_rows = int((global_wgs84_bb[3]-global_wgs84_bb[1])/global_pixel_size_deg)
             LOGGER.info(f'**** creating raster of size {n_cols} by {n_rows}')
             target_raster = driver.Create(
                 global_stitch_raster_path,
@@ -900,8 +903,8 @@ def _run_ndr(
             wgs84_srs.ImportFromEPSG(4326)
             target_raster.SetProjection(wgs84_srs.ExportToWkt())
             target_raster.SetGeoTransform(
-                [GLOBAL_BB[0], GLOBAL_PIXEL_SIZE_DEG, 0,
-                 GLOBAL_BB[3], 0, -GLOBAL_PIXEL_SIZE_DEG])
+                [global_wgs84_bb[0], global_pixel_size_deg, 0,
+                 global_wgs84_bb[3], 0, -global_pixel_size_deg])
             target_band = target_raster.GetRasterBand(1)
             target_band.SetNoDataValue(-9999)
             target_raster = None
@@ -976,12 +979,12 @@ def main():
         scenario_id = os.path.basename(os.path.splitext(config_path)[0])
         scenario_config = configparser.ConfigParser(allow_no_value=True)
         scenario_config.read(config_path)
-        if not scenario_id in scenario_config:
+        if scenario_id not in scenario_config:
             raise ValueError(
                 f'expected a section called "{scenario_id}" {config_path} but only found these section headers: {scenario_config.sections()}')
         missing_keys = []
         for expected_key in expected_keys:
-            if not expected_key in scenario_config[scenario_id]:
+            if expected_key not in scenario_config[scenario_id]:
                 missing_keys.append(expected_key)
         if missing_keys:
             missing_key_str = ', '.join(missing_keys)
@@ -999,6 +1002,7 @@ def main():
     for scenario_id, scenario_config in scenario_list:
         run_scenario(task_graph, scenario_config, scenario_id)
 
+
 def run_scenario(task_graph, config, scenario_id):
     """Run scenario `scenario_id` in config against taskgraph."""
     expected_files = _parse_non_default_options(config, 'files')
@@ -1010,6 +1014,7 @@ def run_scenario(task_graph, config, scenario_id):
     LOGGER.debug(expected_files)
 
     data_map = fetch_and_unpack_data(task_graph, config, scenario_id)
+    LOGGER.debug(data_map)
     # make sure taskgraph doesn't re-run just because the file was opened
     watershed_subset_token_path = config['DEFAULT']['WATERSHED_SUBSET_TOKEN_PATH']
     watershed_subset_task = task_graph.add_task(
@@ -1073,6 +1078,7 @@ def run_scenario(task_graph, config, scenario_id):
             sdr_max=config.getfloat(scenario_id, 'SDR_MAX'),
             ic_0_param=config.getfloat(scenario_id, 'IC_0_PARAM'),
             target_stitch_raster_map=sdr_target_stitch_raster_map,
+            global_pixel_size_deg=config.getfloat(scenario_id, 'GLOBAL_PIXEL_SIZE_DEG'),
             keep_intermediate_files=keep_intermediate_files,
             result_suffix=scenario_id)
 
@@ -1093,6 +1099,7 @@ def run_scenario(task_graph, config, scenario_id):
             threshold_flow_accumulation=config.getfloat(scenario_id, 'THRESHOLD_FLOW_ACCUMULATION'),
             k_param=config.getfloat(scenario_id, 'K_PARAM'),
             target_stitch_raster_map=ndr_target_stitch_raster_map,
+            global_pixel_size_deg=config.getfloat(scenario_id, 'GLOBAL_PIXEL_SIZE_DEG'),
             keep_intermediate_files=keep_intermediate_files,
             result_suffix=scenario_id)
 
@@ -1148,7 +1155,10 @@ def _calculate_intersecting_bounding_box(raster_path_list):
     # create intersecting bounding box of input data
     raster_info_list = [
         geoprocessing.get_raster_info(raster_path)
-        for raster_path in raster_path_list]
+        for raster_path in raster_path_list
+        if geoprocessing.get_raster_info(raster_path)['projection_wkt']
+        is not None]
+
     raster_bounding_box_list = [
         geoprocessing.transform_bounding_box(
             info['bounding_box'],
