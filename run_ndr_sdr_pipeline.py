@@ -484,7 +484,7 @@ def _run_sdr(
                 n_cols, n_rows, 1,
                 gdal.GDT_Float32,
                 options=(
-                    'TILED=YES', 'BIGTIFF=YES', 'COMPRESS=LZW',
+                    'TILED=YES', 'BIGTIFF=YES', 'COMPRESS=LZW', 'PREDICTOR=2',
                     'SPARSE_OK=TRUE', 'BLOCKXSIZE=256', 'BLOCKYSIZE=256'))
             wgs84_srs = osr.SpatialReference()
             wgs84_srs.ImportFromEPSG(4326)
@@ -1038,22 +1038,22 @@ def run_scenario(task_graph, config, scenario_id):
     workspace_dir = config.get(scenario_id, 'WORKSPACE_DIR')
     sdr_target_stitch_raster_map = {
         'sed_export.tif': os.path.join(
-            workspace_dir, 'global_sed_export.tif'),
+            workspace_dir, 'stitched_sed_export.tif'),
         'sed_retention.tif': os.path.join(
-            workspace_dir, 'global_sed_retention.tif'),
+            workspace_dir, 'stitched_sed_retention.tif'),
         'sed_deposition.tif': os.path.join(
-            workspace_dir, 'global_sed_deposition.tif'),
+            workspace_dir, 'stitched_sed_deposition.tif'),
         'usle.tif': os.path.join(
-            workspace_dir, 'global_usle.tif'),
+            workspace_dir, 'stitched_usle.tif'),
     }
 
     ndr_target_stitch_raster_map = {
         'n_export.tif': os.path.join(
-            workspace_dir, 'global_n_export.tif'),
+            workspace_dir, 'stitched_n_export.tif'),
         'n_retention.tif': os.path.join(
-            workspace_dir, 'global_n_retention.tif'),
+            workspace_dir, 'stitched_n_retention.tif'),
         os.path.join('intermediate_outputs', 'modified_load_n.tif'): os.path.join(
-            workspace_dir, 'global_modified_load_n.tif'),
+            workspace_dir, 'stitched_modified_load_n.tif'),
     }
 
     run_sdr = config.getboolean(scenario_id, 'RUN_SDR')
