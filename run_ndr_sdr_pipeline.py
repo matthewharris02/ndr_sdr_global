@@ -30,8 +30,7 @@ logging.basicConfig(
     format=(
         '%(asctime)s (%(relativeCreated)d) %(levelname)s %(name)s'
         ' [%(funcName)s:%(lineno)d] %(message)s'),
-    # filename='sdrndrlog.txt')
-    )
+    filename='sdrndrlog.txt')
 logging.getLogger('ecoshard.taskgraph').setLevel(logging.INFO)
 logging.getLogger('ecoshard.ecoshard').setLevel(logging.INFO)
 logging.getLogger('urllib3.connectionpool').setLevel(logging.INFO)
@@ -313,7 +312,7 @@ def _batch_into_watershed_subsets(
                     watershed_bb[2] > global_bb[2] or
                     watershed_bb[1] > global_bb[3] or
                     watershed_bb[3] < global_bb[1]):
-                LOGGER.warn(
+                LOGGER.warning(
                     f'{watershed_bb} is on a dangerous boundary so dropping')
                 watershed_fid_index[job_id][0].pop()
                 continue
@@ -997,7 +996,7 @@ def main():
 
     task_graph = taskgraph.TaskGraph(
         default_config.get('DEFAULT', 'WORKSPACE_DIR'), multiprocessing.cpu_count(),
-        15.0, parallel_mode='thread', taskgraph_name='run pipeline main')
+        15.0, parallel_mode='process', taskgraph_name='run pipeline main')
 
     for scenario_id, scenario_config in scenario_list:
         run_scenario(task_graph, scenario_config, scenario_id)
@@ -1190,7 +1189,7 @@ def _watersheds_intersect(wgs84_bb, watersheds_path):
         LOGGER.info(f'{watersheds_path} intersects {wgs84_bb} with {watershed_wgs84_bb}')
         return True
     except ValueError:
-        LOGGER.warn(f'{watersheds_path} does not intersect {wgs84_bb}')
+        LOGGER.warning(f'{watersheds_path} does not intersect {wgs84_bb}')
         return False
 
 
