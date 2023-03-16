@@ -405,6 +405,8 @@ def _run_sdr(
         erosivity_path,
         erodibility_path,
         lulc_path,
+        usle_c_path,
+        usle_p_path,
         target_pixel_size,
         biophysical_table_path,
         biophysical_table_lucode_field,
@@ -434,6 +436,8 @@ def _run_sdr(
         erosivity_path (str): path to global erosivity raster
         erodibility_path (str): path to erodability raster
         lulc_path (str): path to landcover raster
+        usle_c_path (str): optional path to continuous C factor raster
+        usle_p_path (str): optional path to continuous P factor raster
         target_pixel_size (float): target projected pixel unit size
         biophysical_table_lucode_field (str): name of the lucode field in
             the biophysical table column
@@ -456,7 +460,8 @@ def _run_sdr(
     """
     # create intersecting bounding box of input data
     global_wgs84_bb = _calculate_intersecting_bounding_box(
-        [dem_path, erosivity_path, erodibility_path, lulc_path])
+        [dem_path, erosivity_path, erodibility_path, lulc_path,
+         usle_c_path, usle_p_path])
 
     # create global stitch rasters and start workers
     stitch_raster_queue_map = {}
@@ -524,7 +529,8 @@ def _run_sdr(
             args=(
                 global_wgs84_bb, watershed_path, local_workspace_dir,
                 dem_path, erosivity_path, erodibility_path, lulc_path,
-                biophysical_table_path, threshold_flow_accumulation, k_param,
+                biophysical_table_path, usle_c_path, usle_p_path,
+                threshold_flow_accumulation, k_param,
                 sdr_max, ic_0_param, l_cap, target_pixel_size,
                 biophysical_table_lucode_field, stitch_raster_queue_map,
                 result_suffix),
@@ -550,6 +556,7 @@ def _run_sdr(
 def _execute_sdr_job(
         global_wgs84_bb, watersheds_path, local_workspace_dir, dem_path,
         erosivity_path, erodibility_path, lulc_path, biophysical_table_path,
+        usle_c_path, usle_p_path,
         threshold_flow_accumulation, k_param, sdr_max, ic_0_param, l_cap,
         target_pixel_size, biophysical_table_lucode_field,
         stitch_raster_queue_map, result_suffix):
@@ -567,6 +574,8 @@ def _execute_sdr_job(
             erodibility_path
             lulc_path
             biophysical_table_path
+            usle_c_path
+            usle_p_path
             threshold_flow_accumulation
             k_param
             sdr_max
@@ -605,7 +614,8 @@ def _execute_sdr_job(
         watershed_bb, target_projection_wkt, osr.SRS_WKT_WGS84_LAT_LONG)
 
     warped_raster_path_list = [
-        os.path.join(clipped_data_dir, os.path.basename(path))
+        None if path is None else os.path.join(
+            clipped_data_dir, os.path.basename(path))
         for path in base_raster_path_list]
 
     # re-warp stuff we already did
@@ -626,6 +636,8 @@ def _execute_sdr_job(
         'watersheds_path': watersheds_path,
         'biophysical_table_path': biophysical_table_path,
         'threshold_flow_accumulation': threshold_flow_accumulation,
+        'usle_c_path': usle_c_path,
+        'usle_p_path': usle_p_path,
         'k_param': k_param,
         'sdr_max': sdr_max,
         'ic_0_param': ic_0_param,
@@ -1034,7 +1046,8 @@ def run_scenario(task_graph, config, scenario_id):
 
     task_graph.join()
 
-    workspace_dir = config.get(scenario_id, 'WORKSPACE_DIR')
+    workspace_dir = scenario_id
+    os.makedirs(workspace_dir, exist_ok=True)
     sdr_target_stitch_raster_map = {
         'sed_export.tif': os.path.join(
             workspace_dir, 'stitched_sed_export.tif'),
@@ -1055,15 +1068,16 @@ def run_scenario(task_graph, config, scenario_id):
             workspace_dir, 'stitched_modified_load_n.tif'),
     }
 
+    config_section = config[scenario_id]
     run_sdr = config.getboolean(scenario_id, 'RUN_SDR')
     run_ndr = config.getboolean(scenario_id, 'RUN_NDR')
     keep_intermediate_files = config.getboolean(
         scenario_id, 'keep_intermediate_files')
-    dem_key = os.path.basename(os.path.splitext(data_map['DEM'])[0])
 
     if run_sdr:
         sdr_workspace_dir = os.path.join(
-            config.get(scenario_id, 'SDR_WORKSPACE_DIR'), dem_key)
+            workspace_dir, config.get(scenario_id, 'SDR_WORKSPACE_DIR'))
+        os.makedirs(sdr_workspace_dir, exist_ok=True)
         # SDR doesn't have fert scenarios
         _run_sdr(
             task_graph=task_graph,
@@ -1072,23 +1086,29 @@ def run_scenario(task_graph, config, scenario_id):
             dem_path=data_map['DEM'],
             erosivity_path=data_map['EROSIVITY'],
             erodibility_path=data_map['ERODIBILITY'],
-            lulc_path=data_map['LULC'],
-            target_pixel_size=config.getfloat(scenario_id, 'TARGET_PIXEL_SIZE_M'),
-            biophysical_table_path=data_map['BIOPHYSICAL_TABLE'],
-            biophysical_table_lucode_field=config.get(scenario_id, 'BIOPHYSICAL_TABLE_LUCODE_COLUMN_ID'),
-            threshold_flow_accumulation=config.get(scenario_id, 'THRESHOLD_FLOW_ACCUMULATION'),
-            l_cap=config.getfloat(scenario_id, 'L_CAP'),
-            k_param=config.getfloat(scenario_id, 'K_PARAM'),
-            sdr_max=config.getfloat(scenario_id, 'SDR_MAX'),
-            ic_0_param=config.getfloat(scenario_id, 'IC_0_PARAM'),
+            lulc_path=data_map.get('LULC', None),
+            usle_c_path=data_map.get('USLE_C', None),
+            usle_p_path=data_map.get('USLE_P', None),
+            target_pixel_size=float(config_section['TARGET_PIXEL_SIZE_M']),
+            biophysical_table_path=data_map.get('BIOPHYSICAL_TABLE', None),
+            biophysical_table_lucode_field=config_section.get(
+                'BIOPHYSICAL_TABLE_LUCODE_COLUMN_ID', None),
+            threshold_flow_accumulation=config_section.get(
+                'THRESHOLD_FLOW_ACCUMULATION', None),
+            l_cap=float(config_section['L_CAP']),
+            k_param=float(config_section['K_PARAM']),
+            sdr_max=float(config_section['SDR_MAX']),
+            ic_0_param=float(config_section['IC_0_PARAM']),
             target_stitch_raster_map=sdr_target_stitch_raster_map,
-            global_pixel_size_deg=config.getfloat(scenario_id, 'GLOBAL_PIXEL_SIZE_DEG'),
+            global_pixel_size_deg=float(
+                config_section['GLOBAL_PIXEL_SIZE_DEG']),
             keep_intermediate_files=keep_intermediate_files,
             result_suffix=scenario_id)
 
     if run_ndr:
         ndr_workspace_dir = os.path.join(
-            config.get(scenario_id, 'NDR_WORKSPACE_DIR'), dem_key)
+            workspace_dir, config.get(scenario_id, 'NDR_WORKSPACE_DIR'))
+        os.makedirs(ndr_workspace_dir, exist_ok=True)
         _run_ndr(
             task_graph=task_graph,
             workspace_dir=ndr_workspace_dir,
@@ -1115,10 +1135,14 @@ def _warp_raster_stack(
     """Do an align of all the rasters but use a taskgraph to do it.
 
     Arguments are same as geoprocessing.align_and_resize_raster_stack.
+
+    Allow for input rasters to be None.
     """
     for raster_path, warped_raster_path, resample_method in zip(
             base_raster_path_list, warped_raster_path_list,
             resample_method_list):
+        if raster_path is None:
+            continue
         working_dir = os.path.dirname(warped_raster_path)
         # first clip to clip projection
         clipped_raster_path = '%s_clipped%s' % os.path.splitext(
@@ -1160,7 +1184,8 @@ def _calculate_intersecting_bounding_box(raster_path_list):
     raster_info_list = [
         geoprocessing.get_raster_info(raster_path)
         for raster_path in raster_path_list
-        if geoprocessing.get_raster_info(raster_path)['projection_wkt']
+        if raster_path is not None and
+        geoprocessing.get_raster_info(raster_path)['projection_wkt']
         is not None]
 
     raster_bounding_box_list = [
