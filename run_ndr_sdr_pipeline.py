@@ -985,6 +985,10 @@ def main():
     config_file_list = [
         path for pattern in args.config_file_path_pattern
         for path in glob.glob(pattern)]
+    if not config_file_list:
+        raise ValueError(
+            f'no config files were found from the input '
+            f'{args.config_file_path_pattern}')
     scenario_list = []
     for config_path in config_file_list:
         scenario_id = os.path.basename(os.path.splitext(config_path)[0])
