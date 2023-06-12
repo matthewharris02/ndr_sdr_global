@@ -1018,6 +1018,7 @@ def main():
         if file_handler is not None:
             LOGGER.removeHandler(file_handler)
         file_handler = logging.FileHandler(f'{scenario_id}_log.txt')
+        LOGGER.addHandler(file_handler)
         run_scenario(task_graph, scenario_config, scenario_id)
 
 
