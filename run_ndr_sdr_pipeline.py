@@ -10,6 +10,7 @@ import logging
 import multiprocessing
 import os
 import shutil
+import sys
 import threading
 import time
 
@@ -29,7 +30,8 @@ logging.basicConfig(
     level=logging.DEBUG,
     format=(
         '%(asctime)s (%(relativeCreated)d) %(levelname)s %(name)s'
-        ' [%(funcName)s:%(lineno)d] %(message)s'))
+        ' [%(funcName)s:%(lineno)d] %(message)s'),
+    stream=sys.stdout)
 logging.getLogger('ecoshard.taskgraph').setLevel(logging.INFO)
 logging.getLogger('ecoshard.ecoshard').setLevel(logging.INFO)
 logging.getLogger('urllib3.connectionpool').setLevel(logging.INFO)
