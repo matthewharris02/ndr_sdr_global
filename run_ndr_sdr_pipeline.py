@@ -29,8 +29,7 @@ logging.basicConfig(
     level=logging.DEBUG,
     format=(
         '%(asctime)s (%(relativeCreated)d) %(levelname)s %(name)s'
-        ' [%(funcName)s:%(lineno)d] %(message)s'),
-    filename='sdrndrlog.txt')
+        ' [%(funcName)s:%(lineno)d] %(message)s'))
 logging.getLogger('ecoshard.taskgraph').setLevel(logging.INFO)
 logging.getLogger('ecoshard.ecoshard').setLevel(logging.INFO)
 logging.getLogger('urllib3.connectionpool').setLevel(logging.INFO)
@@ -1014,7 +1013,11 @@ def main():
         default_config.get('DEFAULT', 'WORKSPACE_DIR'), multiprocessing.cpu_count(),
         15.0, parallel_mode='process', taskgraph_name='run pipeline main')
 
+    file_handler = None
     for scenario_id, scenario_config in scenario_list:
+        if file_handler is not None:
+            LOGGER.removeHandler(file_handler)
+        file_handler = logging.FileHandler(f'{scenario_id}_log.txt')
         run_scenario(task_graph, scenario_config, scenario_id)
 
 
