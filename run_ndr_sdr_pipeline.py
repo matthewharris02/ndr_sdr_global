@@ -980,7 +980,8 @@ def main():
     args = parser.parse_args()
 
     default_config = configparser.ConfigParser(allow_no_value=True)
-    default_config.read('global_config.ini')
+    default_config.read(
+        os.path.join(os.path.dirname(__file__), 'global_config.ini'))
     expected_keys = _parse_non_default_options(default_config, 'expected_keys')
 
     config_file_list = [
