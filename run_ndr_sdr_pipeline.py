@@ -225,7 +225,7 @@ def fetch_and_unpack_data(task_graph, config, scenario_id):
 
 def _batch_into_watershed_subsets(
         watershed_root_dir, degree_separation, done_token_path,
-        global_bb, watershed_subset=None):
+        global_bb, min_watershed_area, watershed_subset=None):
     """Construct geospatially adjacent subsets.
 
     Breaks watersheds up into geospatially similar watersheds and limits
@@ -241,6 +241,8 @@ def _batch_into_watershed_subsets(
             complete, indicates for batching that the task is complete.
         global_bb (list): min_lng, min_lat, max_lng, max_lat bounding box
             to limit watersheds to be selected from
+        min_watershed_area (float): mininmum size of a watershed in square
+            degrees to avoid processing
         watershed_subset (dict): if not None, keys are watershed basefile
             names and values are FIDs to select. If present the simulation
             only constructs batches from these watershed/fids, otherwise
@@ -333,7 +335,7 @@ def _batch_into_watershed_subsets(
                     reverse=True):
             if job_id in job_id_set:
                 raise ValueError(f'{job_id} already processed')
-            if len(watershed_envelope_list) < 3 and area < 0.0001:
+            if len(watershed_envelope_list) < 3 and area < min_watershed_area:
                 # it's too small to process
                 continue
             job_id_set.add(job_id)
@@ -977,6 +979,7 @@ def main():
     """Entry point."""
     parser = argparse.ArgumentParser(description='run NDR/SDR pipeline')
     parser.add_argument('config_file_path_pattern', nargs='+', help='Path to one or more .ini files or matching patterns')
+    parser.add_argument('--min_watershed_area', default=0, type=float, help='Minimum watershed size to process in square degrees')
     args = parser.parse_args()
 
     default_config = configparser.ConfigParser(allow_no_value=True)
@@ -1022,10 +1025,10 @@ def main():
             LOGGER.removeHandler(file_handler)
         file_handler = logging.FileHandler(f'{scenario_id}_log.txt')
         LOGGER.addHandler(file_handler)
-        run_scenario(task_graph, scenario_config, scenario_id)
+        run_scenario(task_graph, scenario_config, scenario_id, args.min_watershed_area)
 
 
-def run_scenario(task_graph, config, scenario_id):
+def run_scenario(task_graph, config, scenario_id, min_watershed_area):
     """Run scenario `scenario_id` in config against taskgraph."""
     expected_files = _parse_non_default_options(config, 'files')
     if not config.getboolean(scenario_id, 'run_ndr'):
@@ -1049,6 +1052,7 @@ def run_scenario(task_graph, config, scenario_id):
             data_map['WATERSHEDS'], 4,
             watershed_subset_token_path,
             eval(config.get('DEFAULT', 'GLOBAL_BB')),
+            min_watershed_area,
             exclusive_watershed_subset),
         target_path_list=[watershed_subset_token_path],
         store_result=True,
