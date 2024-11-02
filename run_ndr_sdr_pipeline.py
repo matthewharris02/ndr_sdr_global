@@ -1041,7 +1041,7 @@ def run_scenario(task_graph, config, scenario_id, min_watershed_area):
     data_map = fetch_and_unpack_data(task_graph, config, scenario_id)
     LOGGER.debug(data_map)
     # make sure taskgraph doesn't re-run just because the file was opened
-    watershed_subset_token_path = config['DEFAULT']['WATERSHED_SUBSET_TOKEN_PATH']
+    watershed_subset_token_path = f"{config['DEFAULT']['WATERSHED_SUBSET_TOKEN_PATH']}_{min_watershed_area}"
     exclusive_watershed_subset = config.get(
         scenario_id, 'watershed_subset', fallback=None)
     if exclusive_watershed_subset is not None:
