@@ -311,10 +311,10 @@ def _batch_into_watershed_subsets(
                 watershed_fid_index[job_id][0].append(fid)
             watershed_envelope = watershed_geom.GetEnvelope()
             watershed_bb = [watershed_envelope[i] for i in [0, 2, 1, 3]]
-            if (watershed_bb[0] < global_bb[0] or
-                    watershed_bb[2] > global_bb[2] or
-                    watershed_bb[1] > global_bb[3] or
-                    watershed_bb[3] < global_bb[1]):
+            if global_bb is not None and (watershed_bb[0] < global_bb[0] or
+                                          watershed_bb[2] > global_bb[2] or
+                                          watershed_bb[1] > global_bb[3] or
+                                          watershed_bb[3] < global_bb[1]):
                 LOGGER.warning(
                     f'{watershed_bb} is on a dangerous boundary so dropping')
                 watershed_fid_index[job_id][0].pop()
@@ -722,11 +722,15 @@ def _execute_ndr_job(
     watershed_bb = watershed_info['bounding_box']
     lat_lng_bb = geoprocessing.transform_bounding_box(
         watershed_bb, target_projection_wkt, osr.SRS_WKT_WGS84_LAT_LONG)
+    print(lat_lng_bb)
 
     warped_raster_path_list = [
         os.path.join(clipped_data_dir, os.path.basename(path))
         for path in base_raster_path_list]
 
+    print(dem_pixel_size)
+    print(target_pixel_size)
+    sys.exit()
     _warp_raster_stack(
         local_ndr_taskgraph, base_raster_path_list, warped_raster_path_list,
         resample_method_list, dem_pixel_size, target_pixel_size,
@@ -1015,43 +1019,46 @@ def main():
 
     LOGGER.debug(scenario_list)
 
-    task_graph = taskgraph.TaskGraph(
-        default_config.get('DEFAULT', 'WORKSPACE_DIR'), multiprocessing.cpu_count(),
-        15.0, parallel_mode='process', taskgraph_name='run pipeline main')
-
     file_handler = None
     for scenario_id, scenario_config in scenario_list:
         if file_handler is not None:
             LOGGER.removeHandler(file_handler)
-        file_handler = logging.FileHandler(f'{scenario_id}_log.txt')
+        workspace_dir = scenario_config.get(scenario_id, 'WORKSPACE_DIR')
+        os.makedirs(workspace_dir, exist_ok=True)
+        file_handler = logging.FileHandler(
+            os.path.join(workspace_dir, f'{scenario_id}_log.txt'))
         LOGGER.addHandler(file_handler)
-        run_scenario(task_graph, scenario_config, scenario_id, args.min_watershed_area)
+        run_scenario(workspace_dir, default_config, scenario_config, scenario_id, args.min_watershed_area)
 
 
-def run_scenario(task_graph, config, scenario_id, min_watershed_area):
+def run_scenario(workspace_dir, default_config, scenario_config, scenario_id, min_watershed_area):
     """Run scenario `scenario_id` in config against taskgraph."""
-    expected_files = _parse_non_default_options(config, 'files')
-    if not config.getboolean(scenario_id, 'run_ndr'):
-        expected_files -= _parse_non_default_options(config, 'ndr_expected_keys')
-    if not config.getboolean(scenario_id, 'run_sdr'):
-        expected_files -= _parse_non_default_options(config, 'sdr_expected_keys')
+    task_graph = taskgraph.TaskGraph(
+        workspace_dir, multiprocessing.cpu_count(),
+        15.0, parallel_mode='process', taskgraph_name=f'run pipeline {scenario_id}')
+    expected_files = _parse_non_default_options(default_config, 'files')
+    if not scenario_config.getboolean(scenario_id, 'run_ndr'):
+        expected_files -= _parse_non_default_options(default_config, 'ndr_expected_keys')
+    if not scenario_config.getboolean(scenario_id, 'run_sdr'):
+        expected_files -= _parse_non_default_options(default_config, 'sdr_expected_keys')
 
     LOGGER.debug(expected_files)
 
-    data_map = fetch_and_unpack_data(task_graph, config, scenario_id)
-    LOGGER.debug(data_map)
+    #data_map = fetch_and_unpack_data(task_graph, scenario_config, scenario_id)
+    #LOGGER.debug(data_map)
     # make sure taskgraph doesn't re-run just because the file was opened
-    watershed_subset_token_path = f"{config['DEFAULT']['WATERSHED_SUBSET_TOKEN_PATH']}_{min_watershed_area}"
-    exclusive_watershed_subset = config.get(
+    watershed_subset_token_path = os.path.join(
+        workspace_dir, f"{default_config['DEFAULT']['WATERSHED_SUBSET_TOKEN_PATH']}_{min_watershed_area}")
+    exclusive_watershed_subset = scenario_config.get(
         scenario_id, 'watershed_subset', fallback=None)
     if exclusive_watershed_subset is not None:
         exclusive_watershed_subset = eval(exclusive_watershed_subset)
     watershed_subset_task = task_graph.add_task(
         func=_batch_into_watershed_subsets,
         args=(
-            data_map['WATERSHEDS'], 4,
+            scenario_config[scenario_id]['WATERSHEDS'], 4,
             watershed_subset_token_path,
-            eval(config.get('DEFAULT', 'GLOBAL_BB')),
+            eval(scenario_config.get('DEFAULT', 'GLOBAL_BB', fallback='None')),
             min_watershed_area,
             exclusive_watershed_subset),
         target_path_list=[watershed_subset_token_path],
@@ -1061,8 +1068,6 @@ def run_scenario(task_graph, config, scenario_id, min_watershed_area):
 
     task_graph.join()
 
-    workspace_dir = scenario_id
-    os.makedirs(workspace_dir, exist_ok=True)
     sdr_target_stitch_raster_map = {
         'sed_export.tif': os.path.join(
             workspace_dir, 'stitched_sed_export.tif'),
@@ -1083,29 +1088,28 @@ def run_scenario(task_graph, config, scenario_id, min_watershed_area):
             workspace_dir, 'stitched_modified_load_n.tif'),
     }
 
-    config_section = config[scenario_id]
-    run_sdr = config.getboolean(scenario_id, 'RUN_SDR')
-    run_ndr = config.getboolean(scenario_id, 'RUN_NDR')
-    keep_intermediate_files = config.getboolean(
+    config_section = scenario_config[scenario_id]
+    run_sdr = scenario_config.getboolean(scenario_id, 'RUN_SDR')
+    run_ndr = scenario_config.getboolean(scenario_id, 'RUN_NDR')
+    keep_intermediate_files = scenario_config.getboolean(
         scenario_id, 'keep_intermediate_files')
 
     if run_sdr:
-        sdr_workspace_dir = os.path.join(
-            workspace_dir, config.get(scenario_id, 'SDR_WORKSPACE_DIR'))
+        sdr_workspace_dir = os.path.join(workspace_dir, 'sdr_workspace')
         os.makedirs(sdr_workspace_dir, exist_ok=True)
         # SDR doesn't have fert scenarios
         _run_sdr(
             task_graph=task_graph,
             workspace_dir=sdr_workspace_dir,
             watershed_path_list=watershed_subset_list,
-            dem_path=data_map['DEM'],
-            erosivity_path=data_map['EROSIVITY'],
-            erodibility_path=data_map['ERODIBILITY'],
-            lulc_path=data_map.get('LULC', None),
-            usle_c_path=data_map.get('USLE_C', None),
-            usle_p_path=data_map.get('USLE_P', None),
+            dem_path=config_section['DEM'],
+            erosivity_path=config_section['EROSIVITY'],
+            erodibility_path=config_section['ERODIBILITY'],
+            lulc_path=config_section.get('LULC', None),
+            usle_c_path=config_section.get('USLE_C', None),
+            usle_p_path=config_section.get('USLE_P', None),
             target_pixel_size=float(config_section['TARGET_PIXEL_SIZE_M']),
-            biophysical_table_path=data_map.get('BIOPHYSICAL_TABLE', None),
+            biophysical_table_path=config_section.get('BIOPHYSICAL_TABLE', None),
             biophysical_table_lucode_field=config_section.get(
                 'BIOPHYSICAL_TABLE_LUCODE_COLUMN_ID', None),
             threshold_flow_accumulation=config_section.get(
@@ -1121,26 +1125,27 @@ def run_scenario(task_graph, config, scenario_id, min_watershed_area):
             result_suffix=scenario_id)
 
     if run_ndr:
-        ndr_workspace_dir = os.path.join(
-            workspace_dir, config.get(scenario_id, 'NDR_WORKSPACE_DIR'))
+        ndr_workspace_dir = os.path.join(workspace_dir, 'ndr_workspace')
         os.makedirs(ndr_workspace_dir, exist_ok=True)
         _run_ndr(
             task_graph=task_graph,
             workspace_dir=ndr_workspace_dir,
-            runoff_proxy_path=data_map['RUNOFF_PROXY'],
-            fertilizer_path=data_map['FERTILIZER'],
-            biophysical_table_path=data_map['BIOPHYSICAL_TABLE'],
-            biophysical_table_lucode_field=config.get(scenario_id, 'BIOPHYSICAL_TABLE_LUCODE_COLUMN_ID'),
+            runoff_proxy_path=config_section['RUNOFF_PROXY'],
+            fertilizer_path=config_section['FERTILIZER'],
+            biophysical_table_path=config_section['BIOPHYSICAL_TABLE'],
+            biophysical_table_lucode_field=config_section.get(scenario_id, 'BIOPHYSICAL_TABLE_LUCODE_COLUMN_ID'),
             watershed_path_list=watershed_subset_list,
-            dem_path=data_map['DEM'],
-            lulc_path=data_map['LULC'],
-            target_pixel_size=config.getfloat(scenario_id, 'TARGET_PIXEL_SIZE_M'),
-            threshold_flow_accumulation=config.getfloat(scenario_id, 'THRESHOLD_FLOW_ACCUMULATION'),
-            k_param=config.getfloat(scenario_id, 'K_PARAM'),
+            dem_path=config_section['DEM'],
+            lulc_path=config_section['LULC'],
+            target_pixel_size=config_section['TARGET_PIXEL_SIZE_M'],
+            threshold_flow_accumulation=float(config_section['THRESHOLD_FLOW_ACCUMULATION']),
+            k_param=config_section['K_PARAM'],
             target_stitch_raster_map=ndr_target_stitch_raster_map,
-            global_pixel_size_deg=config.getfloat(scenario_id, 'GLOBAL_PIXEL_SIZE_DEG'),
+            global_pixel_size_deg=float(config_section['GLOBAL_PIXEL_SIZE_DEG']),
             keep_intermediate_files=keep_intermediate_files,
             result_suffix=scenario_id)
+    task_graph.join()
+    task_graph.close()
 
 
 def _warp_raster_stack(
