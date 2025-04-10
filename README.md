@@ -1,3 +1,7 @@
+Forked of Nutrient and Sediment Delivery Computational Pipeline
+===============================================================
+This has been forked from [springinnovate](https://github.com/springinnovate/ndr_sdr_global) for ease of updating. The original README is below, and new additions are made above it.
+
 Nutrient and Sediment Delivery Computational Pipeline
 =====================================================
 
