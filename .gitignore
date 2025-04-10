@@ -1,2 +1,5 @@
 .venv/*
 *.code-workspace
+# Folders created by run_ndr_sdr_pipeline.py
+https:/*
+workspace/*
